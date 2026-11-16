@@ -1,0 +1,3 @@
+[submodule "architecture-alexandrite-k8s-trace"]
+	path = architecture-alexandrite-k8s-trace
+	url = https://github.com/Yandex-Practicum/architecture-alexandrite-k8s-trace
