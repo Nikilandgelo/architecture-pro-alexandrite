@@ -1,0 +1,51 @@
+@startuml
+autonumber
+
+participant "Оператор" as Op
+participant "MES (SPA)" as MES
+participant "MES API" as API
+participant "Фоновое обновление" as Refresher
+database "Redis" as Redis
+database "MES DB" as DB
+
+== Фоновое обновление кеша (каждые 5-10 секунд) ==
+Refresher -> Redis: SET lock NX EX (захват блокировки)
+alt блокировка получена
+    Refresher -> DB: SELECT заказы со статусом MANUFACTURING_APPROVED
+    DB --> Refresher: список заказов
+    Refresher -> Redis: HSET orders:awaiting <order_id> <данные для UI> (для каждого заказа)
+else блокировка у другого инстанса
+    Refresher -> Refresher: пропустить цикл
+end
+
+== Чтение списка заказов ==
+Op -> MES: Открыть первую страницу
+MES -> API: GET /orders?status=MANUFACTURING_APPROVED
+API -> Redis: HGETALL orders:awaiting
+alt кеш есть
+    Redis --> API: заказы
+else кеша нет или Redis недоступен
+    API -> DB: SELECT заказы со статусом MANUFACTURING_APPROVED
+    DB --> API: список заказов
+end
+API -> API: сортировка (новые сверху)
+API --> MES: список заказов
+MES --> Op: Отобразить список
+
+== Смена статуса: оператор берет заказ ==
+Op -> MES: Взять заказ
+MES -> API: PATCH /orders/{id}/status (MANUFACTURING_STARTED)
+API -> DB: UPDATE ... SET status = MANUFACTURING_STARTED\nWHERE id = {id} AND status = MANUFACTURING_APPROVED (блокировка строки)
+alt обновлена 1 строка
+    DB --> API: OK
+    API -> Redis: HDEL orders:awaiting <order_id>
+    API --> MES: 200 OK
+    MES --> Op: Заказ взят
+else обновлено 0 строк (заказ уже взят)
+    DB --> API: 0 строк
+    API -> Redis: HDEL orders:awaiting <order_id>
+    API --> MES: 409 Conflict
+    MES --> Op: Заказ уже взят другим оператором
+end
+
+@enduml
